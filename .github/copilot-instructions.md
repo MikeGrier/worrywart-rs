@@ -1,4 +1,4 @@
-# GitHub Copilot Instructions — {{project_name}}
+# GitHub Copilot Instructions — worrywart-rs
 
 ## Cargo commands — use MCP tools, never the terminal
 

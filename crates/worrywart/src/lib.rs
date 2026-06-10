@@ -2,7 +2,7 @@
 
 //! A library that worries, maybe too much, about child processes
 //!
-//! This is the core library crate for `{{project_name}}`.
+//! This is the core library crate for `worrywart-rs`.
 
 /// Returns a hello-world greeting from this crate.
 pub fn hello() -> String {
