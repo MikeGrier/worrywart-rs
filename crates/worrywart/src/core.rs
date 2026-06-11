@@ -10,11 +10,12 @@
 //! These types are Windows-only.  For cross-platform use, see [`crate::compat`].
 
 use std::ffi::{OsStr, OsString};
+use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::iocp::Iocp;
-use crate::pump::{JobSpawnParams, Pump, SpawnRequest, SpawnResponse, TerminationResult};
+use crate::pump::{Pump, SpawnRequest, SpawnResponse, TerminationResult};
 use crate::{Monitor, TerminationReason};
 
 // ---------------------------------------------------------------------------
@@ -217,19 +218,44 @@ impl WorrywartCommand {
     }
 
     /// Spawns the child process.
-    pub fn spawn(self) -> std::io::Result<WorrywartChild> {
+    pub fn spawn(mut self) -> std::io::Result<WorrywartChild> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+
         let use_debug_api = self.monitors.contains(&Monitor::DebugApi);
         let use_job_object = self.monitors.contains(&Monitor::JobObject);
+        let use_sentinel = self.monitors.contains(&Monitor::Sentinel);
 
-        if use_debug_api {
-            // Debug pump path — also assigns to the job object.
-            self.spawn_debug()
-        } else if use_job_object {
-            // Job-object only path — no debugger, IOCP monitors exits.
-            self.spawn_job_monitored()
+        // Create sentinel pipe before spawning so the inheritable write end
+        // is available when CreateProcess runs.
+        let sentinel = if use_sentinel {
+            let pipe = crate::sentinel::create()?;
+            let handle_val: OsString = (pipe.write_handle as usize).to_string().into();
+            self.envs
+                .push((crate::sentinel::ENV_VAR.into(), handle_val));
+            Some(pipe)
         } else {
-            self.spawn_plain()
+            None
+        };
+
+        let mut child = if use_debug_api {
+            // Debug pump path — also assigns to the job object.
+            self.spawn_debug()?
+        } else if use_job_object || use_sentinel {
+            // Job-object / sentinel path — IOCP monitors exits.
+            self.spawn_job_monitored()?
+        } else {
+            self.spawn_plain()?
+        };
+
+        if let Some(pipe) = sentinel {
+            // Close the parent's copy of the write end immediately.  The
+            // child now holds the only remaining copy; when the child exits
+            // the pipe closes and the sentinel listener reports its result.
+            unsafe { CloseHandle(pipe.write_handle) };
+            child.sentinel_rx = Some(pipe.sentinel_rx);
         }
+
+        Ok(child)
     }
 
     fn spawn_debug(self) -> std::io::Result<WorrywartChild> {
@@ -243,13 +269,7 @@ impl WorrywartCommand {
         let pump = guard.as_ref().unwrap();
 
         let command_line = build_command_line(&self.program, &self.args);
-
-        let environment = if self.env_clear && self.envs.is_empty() {
-            Some(vec![0u16])
-        } else {
-            None
-        };
-
+        let environment = build_env_block(self.env_clear, &self.envs);
         let current_directory = self.current_dir.as_deref().map(to_wide_null);
 
         let (exit_tx, exit_rx) = mpsc::sync_channel::<TerminationResult>(1);
@@ -283,19 +303,16 @@ impl WorrywartCommand {
             thread_handle,
             exit_rx: Some(exit_rx),
             cached_reason: None,
+            sentinel_rx: None,
         })
     }
 
     fn spawn_job_monitored(self) -> std::io::Result<WorrywartChild> {
-        use crate::pump::{create_process_for_job, to_wide_null};
+        use crate::pump::{create_process_for_job, to_wide_null, JobSpawnParams};
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 
         let command_line = build_command_line(&self.program, &self.args);
-        let environment = if self.env_clear && self.envs.is_empty() {
-            Some(vec![0u16])
-        } else {
-            None
-        };
+        let environment = build_env_block(self.env_clear, &self.envs);
         let current_directory = self.current_dir.as_deref().map(to_wide_null);
 
         let params = JobSpawnParams {
@@ -331,6 +348,7 @@ impl WorrywartCommand {
             thread_handle: INVALID_HANDLE_VALUE,
             exit_rx: Some(exit_rx),
             cached_reason: None,
+            sentinel_rx: None,
         })
     }
 
@@ -349,6 +367,58 @@ impl WorrywartCommand {
         let child = cmd.spawn()?;
         let pid = child.id();
         Ok(WorrywartChild::from_std(child, pid))
+    }
+}
+
+/// Builds a `CREATE_UNICODE_ENVIRONMENT` block for `CreateProcessW`.
+///
+/// Returns `None` (inherit parent environment unchanged) when `env_clear` is
+/// false and `envs` is empty.  Otherwise merges the current-process
+/// environment (unless `env_clear`) with the provided overrides/additions.
+fn build_env_block(env_clear: bool, envs: &[(OsString, OsString)]) -> Option<Vec<u16>> {
+    if !env_clear && envs.is_empty() {
+        return None;
+    }
+
+    let mut pairs: Vec<(OsString, OsString)> = if env_clear {
+        Vec::new()
+    } else {
+        std::env::vars_os().collect()
+    };
+
+    // Apply explicit overrides/additions.
+    for (k, v) in envs {
+        pairs.retain(|(ek, _)| ek.as_os_str() != k.as_os_str());
+        pairs.push((k.clone(), v.clone()));
+    }
+
+    let mut block: Vec<u16> = Vec::new();
+    for (k, v) in &pairs {
+        block.extend(k.encode_wide());
+        block.push(b'=' as u16);
+        block.extend(v.encode_wide());
+        block.push(0);
+    }
+    block.push(0); // double-null terminator
+    Some(block)
+}
+
+/// Refines an `Unknown` exit into `CleanExit` or `ExternalKill` based on
+/// whether the sentinel message was received.  Other variants are unchanged.
+fn refine_with_sentinel(
+    reason: TerminationReason,
+    sentinel_rx: &mut Option<mpsc::Receiver<bool>>,
+) -> TerminationReason {
+    let rx = match sentinel_rx.take() {
+        Some(rx) => rx,
+        None => return reason,
+    };
+    let sentinel_ok = rx.recv().unwrap_or(false);
+    match reason {
+        TerminationReason::Unknown(status) if sentinel_ok => TerminationReason::CleanExit(status),
+        TerminationReason::Unknown(status) => TerminationReason::ExternalKill(status),
+        // Crash / FastFail / already classified — sentinel does not override.
+        other => other,
     }
 }
 
@@ -404,6 +474,10 @@ pub struct WorrywartChild {
     thread_handle: windows_sys::Win32::Foundation::HANDLE,
     exit_rx: Option<mpsc::Receiver<TerminationResult>>,
     cached_reason: Option<CachedReason>,
+    /// Receives `true` if the sentinel message arrived before pipe EOF;
+    /// receives `false` if the pipe closed without a sentinel.
+    /// `None` when `Monitor::Sentinel` was not requested.
+    sentinel_rx: Option<mpsc::Receiver<bool>>,
 }
 
 /// A cheaply-clonable snapshot of a `TerminationReason`.
@@ -456,7 +530,6 @@ impl WorrywartChild {
     fn from_std(child: std::process::Child, pid: u32) -> Self {
         // Drop the std::process::Child — we've already captured its PID.
         // The process keeps running; we hold no handle in plain mode.
-        // (Phase 2 will hold a proper HANDLE via OpenProcess.)
         drop(child);
         WorrywartChild {
             pid,
@@ -464,6 +537,7 @@ impl WorrywartChild {
             thread_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             exit_rx: None,
             cached_reason: None,
+            sentinel_rx: None,
         }
     }
 
@@ -488,7 +562,7 @@ impl WorrywartChild {
             return Ok(cached.into_reason());
         }
 
-        let reason = if let Some(ref rx) = self.exit_rx {
+        let raw = if let Some(ref rx) = self.exit_rx {
             match rx.recv() {
                 Ok(result) => result?,
                 // Channel closed (pump/IOCP thread gone) — fall back to a plain
@@ -498,6 +572,11 @@ impl WorrywartChild {
         } else {
             self.wait_plain()?
         };
+
+        // Refine Unknown → CleanExit / ExternalKill using the sentinel result.
+        // By the time exit_rx delivers, the child process is dead and its copy
+        // of the pipe write end is closed, so sentinel_rx resolves promptly.
+        let reason = refine_with_sentinel(raw, &mut self.sentinel_rx);
 
         // Re-cache for a second call.
         self.cached_reason = Some(CachedReason::from_reason(&reason));

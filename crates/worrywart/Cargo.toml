@@ -24,6 +24,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_Security",
     "Win32_System_JobObjects",
     "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_Storage_FileSystem",
 ] }
 
 [dev-dependencies]
@@ -51,5 +53,11 @@ doc = false
 [[bin]]
 name = "helper-sleep"
 path = "src/bin/helper_sleep.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "helper-sentinel"
+path = "src/bin/helper_sentinel.rs"
 test = false
 doc = false

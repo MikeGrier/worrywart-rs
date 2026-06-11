@@ -27,6 +27,8 @@ pub(crate) mod iocp;
 mod monitor;
 #[cfg(windows)]
 pub(crate) mod pump;
+#[cfg(windows)]
+pub(crate) mod sentinel;
 mod termination;
 
 pub use monitor::Monitor;

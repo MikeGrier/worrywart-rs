@@ -1,0 +1,20 @@
+# Copyright (c) 2026 Michael Grier
+
+[package]
+name          = "worrywart-client"
+description   = "Client-side sentinel support for worrywart child-process monitoring"
+readme        = "README.md"
+version.workspace       = true
+authors.workspace       = true
+edition.workspace       = true
+rust-version.workspace  = true
+license.workspace       = true
+repository.workspace    = true
+homepage.workspace      = true
+documentation.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+] }

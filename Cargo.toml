@@ -3,6 +3,7 @@
 [workspace]
 members = [
     "crates/worrywart",
+    "crates/worrywart-client",
 ]
 resolver = "2"
 
