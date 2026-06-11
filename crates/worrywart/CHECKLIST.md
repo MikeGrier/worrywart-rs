@@ -33,11 +33,11 @@ One item, one commit. Tests must pass before committing.
 
 ## Phase 2 — Technique 1: Job Object + IOCP
 
-- [ ] P2-1: Create a Job Object in `Worrywart::new()` and set `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` by default; close it on `Drop`
-- [ ] P2-2: Use `PROC_THREAD_ATTRIBUTE_JOB_LIST` to assign the child to the job atomically at creation (no post-creation `AssignProcessToJobObject`)
-- [ ] P2-3: Implement IOCP listener thread: associate an IOCP with the job, dispatch `JOB_OBJECT_MSG_EXIT_PROCESS` and `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS`
-- [ ] P2-4: Wire `Monitor::JobObject` end-to-end in `WorrywartCommand`; IOCP crash signal upgrades `Unknown` → `Crash` when Debug API is not active
-- [ ] P2-5: Add integration tests: drop `Worrywart` while child is sleeping → child is killed; child that crashes → `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS` observed
+- [x] P2-1: Create a Job Object in `Worrywart::new()` and set `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` by default; close it on `Drop`
+- [x] P2-2: Use `PROC_THREAD_ATTRIBUTE_JOB_LIST` to assign the child to the job atomically at creation (no post-creation `AssignProcessToJobObject`)
+- [x] P2-3: Implement IOCP listener thread: associate an IOCP with the job, dispatch `JOB_OBJECT_MSG_EXIT_PROCESS` and `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS`
+- [x] P2-4: Wire `Monitor::JobObject` end-to-end in `WorrywartCommand`; IOCP crash signal upgrades `Unknown` → `Crash` when Debug API is not active
+- [x] P2-5: Add integration tests: drop `Worrywart` while child is sleeping → child is killed; child that crashes → `JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS` observed
 
 ---
 
