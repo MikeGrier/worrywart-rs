@@ -11,6 +11,32 @@
 //!
 //! For callers that only care about exit codes, replace
 //! `use tokio::process` with `use worrywart` and nothing else changes.
+//!
+//! # Intentional gaps vs `tokio::process`
+//!
+//! The following `tokio::process` methods are deliberately omitted because
+//! they add I/O-plumbing complexity that is out of scope for a monitoring
+//! library.  Callers that need them can fall through to `tokio::process`
+//! directly for the I/O-heavy path, or use the [`core`](crate::core)
+//! types on Windows.
+//!
+//! ## `Command`
+//!
+//! - **`Command::status()`** — Not implemented.  Equivalent to
+//!   `cmd.spawn()?.wait().await`.
+//! - **`Command::output()`** — Not implemented.  Spawns the child, waits,
+//!   and collects the entire stdout/stderr into memory.
+//!
+//! ## `Child`
+//!
+//! - **`Child::wait_with_output()`** — Not implemented.  Waits for exit and
+//!   collects stdout/stderr into a [`std::process::Output`].
+//! - **`Child::forget()`** — Not implemented.  Detaches the `Child` handle
+//!   from the process without killing it; the process runs until it exits
+//!   on its own.
+//! - **`Command::as_std()` / `Command::as_std_mut()`** — Not exposed.
+//!   Direct access to the underlying [`std::process::Command`] is not
+//!   provided; use [`tokio::process::Command`] directly if you need it.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -119,8 +145,9 @@ impl Command {
 
     /// Enables a monitoring technique for this child.
     ///
-    /// May be called multiple times to combine techniques.  In Phase 0
-    /// the technique is stored but not yet acted upon.
+    /// May be called multiple times to combine techniques.  The technique
+    /// is stored but not acted upon by the compat layer; use
+    /// [`crate::core::WorrywartCommand`] (Windows) for active monitoring.
     pub fn monitor(&mut self, technique: Monitor) -> &mut Self {
         self._monitors.push(technique);
         self
@@ -170,8 +197,10 @@ impl Child {
     /// Waits for the child to exit and returns the classified
     /// [`TerminationReason`].
     ///
-    /// In Phase 0 this always returns [`TerminationReason::Unknown`]
-    /// because no monitoring techniques are implemented yet.
+    /// The compat layer delegates to `tokio::process` for process management
+    /// and does not apply any worrywart monitoring techniques.  Use
+    /// [`crate::core::WorrywartChild::wait_diagnosed`] (Windows) for full
+    /// classification.
     pub async fn wait_diagnosed(&mut self) -> std::io::Result<TerminationReason> {
         let status = self.inner.wait().await?;
         Ok(TerminationReason::Unknown(status))
