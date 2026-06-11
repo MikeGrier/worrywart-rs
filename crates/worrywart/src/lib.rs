@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Michael Grier
 
+#![deny(missing_docs)]
+
 //! A library that worries, maybe too much, about child processes.
 //!
 //! # Overview

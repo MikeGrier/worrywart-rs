@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Michael Grier
 
+#![deny(missing_docs)]
+
 //! Sentinel client for the `worrywart` child-process monitor.
 //!
 //! Child processes that are monitored via `Monitor::Sentinel` should call
