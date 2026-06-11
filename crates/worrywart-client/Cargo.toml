@@ -11,10 +11,13 @@ rust-version.workspace  = true
 license.workspace       = true
 repository.workspace    = true
 homepage.workspace      = true
-documentation.workspace = true
+documentation           = "https://docs.rs/worrywart-client"
+keywords      = ["process", "monitoring", "windows", "sentinel"]
+categories    = ["os::windows-apis", "development-tools"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
+    "Win32_System_IO",
 ] }

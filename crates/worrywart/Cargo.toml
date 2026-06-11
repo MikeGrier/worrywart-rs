@@ -12,6 +12,8 @@ license.workspace       = true
 repository.workspace    = true
 homepage.workspace      = true
 documentation.workspace = true
+keywords      = ["process", "monitoring", "windows", "debug", "crash"]
+categories    = ["os::windows-apis", "development-tools", "asynchronous"]
 
 [dependencies]
 tokio   = { version = "1.52.3", features = ["process"] }
