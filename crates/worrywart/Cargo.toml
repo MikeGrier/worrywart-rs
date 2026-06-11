@@ -21,7 +21,27 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
     "Win32_System_Diagnostics_Debug",
+    "Win32_Security",
 ] }
 
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["rt", "macros", "rt-multi-thread"] }
+
+# Small helper binaries used by Phase 1 integration tests.
+[[bin]]
+name = "helper-exit0"
+path = "src/bin/helper_exit0.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "helper-crash"
+path = "src/bin/helper_crash.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "helper-fastfail"
+path = "src/bin/helper_fastfail.rs"
+test = false
+doc = false
