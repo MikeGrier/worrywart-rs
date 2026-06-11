@@ -13,33 +13,105 @@ use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 
-use crate::pump::{Pump, SpawnRequest, SpawnResponse, TerminationResult};
+use crate::iocp::Iocp;
+use crate::pump::{JobSpawnParams, Pump, SpawnRequest, SpawnResponse, TerminationResult};
 use crate::{Monitor, TerminationReason};
+
+// ---------------------------------------------------------------------------
+// RAII wrapper for the Job Object handle.
+// ---------------------------------------------------------------------------
+
+struct JobHandle(windows_sys::Win32::Foundation::HANDLE);
+
+// SAFETY: HANDLE is *mut c_void; kernel handles are safe to transfer between
+// threads in the same process.
+unsafe impl Send for JobHandle {}
+unsafe impl Sync for JobHandle {}
+
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+        }
+    }
+}
+
+impl JobHandle {
+    fn raw(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.0
+    }
+}
 
 /// The root monitor/owner instance.
 ///
-/// Holds the debug pump thread (when [`Monitor::DebugApi`] is selected).
-/// Job Object ownership is added in Phase 2.
+/// Holds the Job Object, the IOCP listener thread (when
+/// [`Monitor::JobObject`] is selected), and the debug pump thread (when
+/// [`Monitor::DebugApi`] is selected).
 ///
-/// Dropping this value shuts down the pump thread.
+/// Dropping this value kills all child processes owned by the job
+/// (via `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) once the last
+/// [`WorrywartCommand`] derived from it is also dropped.
 #[cfg(windows)]
 pub struct Worrywart {
     /// Lazily initialised pump thread.  `None` until first `DebugApi` spawn.
     pump: Arc<Mutex<Option<Pump>>>,
+    /// Job Object handle.  All children are assigned to this job at creation.
+    job: Arc<JobHandle>,
+    /// Lazily initialised IOCP listener.  `None` until first `JobObject` spawn.
+    iocp: Arc<Mutex<Option<Iocp>>>,
 }
 
 #[cfg(windows)]
 impl Worrywart {
-    /// Creates a new `Worrywart` instance.
+    /// Creates a new `Worrywart` instance and its associated Job Object.
     pub fn new() -> std::io::Result<Self> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let job = unsafe {
+            windows_sys::Win32::System::JobObjects::CreateJobObjectW(
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        if job.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        // Set JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE so that dropping this
+        // Worrywart kills all child processes still in the job.
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let ok = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const _,
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if ok == windows_sys::Win32::Foundation::FALSE {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
+            return Err(std::io::Error::last_os_error());
+        }
+
         Ok(Worrywart {
             pump: Arc::new(Mutex::new(None)),
+            job: Arc::new(JobHandle(job)),
+            iocp: Arc::new(Mutex::new(None)),
         })
     }
 
     /// Returns a builder for spawning a monitored child process.
     pub fn command<S: AsRef<OsStr>>(&self, program: S) -> WorrywartCommand {
-        WorrywartCommand::new_with_pump(program.as_ref(), Arc::clone(&self.pump))
+        WorrywartCommand::new_with_state(
+            program.as_ref(),
+            Arc::clone(&self.pump),
+            Arc::clone(&self.job),
+            Arc::clone(&self.iocp),
+        )
     }
 }
 
@@ -64,11 +136,18 @@ pub struct WorrywartCommand {
     monitors: Vec<Monitor>,
     affinity_mask: usize,
     pump: Arc<Mutex<Option<Pump>>>,
+    job: Arc<JobHandle>,
+    iocp: Arc<Mutex<Option<Iocp>>>,
 }
 
 #[cfg(windows)]
 impl WorrywartCommand {
-    fn new_with_pump(program: &OsStr, pump: Arc<Mutex<Option<Pump>>>) -> Self {
+    fn new_with_state(
+        program: &OsStr,
+        pump: Arc<Mutex<Option<Pump>>>,
+        job: Arc<JobHandle>,
+        iocp: Arc<Mutex<Option<Iocp>>>,
+    ) -> Self {
         WorrywartCommand {
             program: program.to_owned(),
             args: Vec::new(),
@@ -78,6 +157,8 @@ impl WorrywartCommand {
             monitors: Vec::new(),
             affinity_mask: 0,
             pump,
+            job,
+            iocp,
         }
     }
 
@@ -138,9 +219,14 @@ impl WorrywartCommand {
     /// Spawns the child process.
     pub fn spawn(self) -> std::io::Result<WorrywartChild> {
         let use_debug_api = self.monitors.contains(&Monitor::DebugApi);
+        let use_job_object = self.monitors.contains(&Monitor::JobObject);
 
         if use_debug_api {
+            // Debug pump path — also assigns to the job object.
             self.spawn_debug()
+        } else if use_job_object {
+            // Job-object only path — no debugger, IOCP monitors exits.
+            self.spawn_job_monitored()
         } else {
             self.spawn_plain()
         }
@@ -179,6 +265,8 @@ impl WorrywartCommand {
             stdout_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             stderr_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             use_stdio_handles: false,
+            // Always assign to the job so kill-on-close applies.
+            job_handle: self.job.raw(),
         };
 
         let SpawnResponse {
@@ -193,6 +281,54 @@ impl WorrywartCommand {
             pid,
             process_handle,
             thread_handle,
+            exit_rx: Some(exit_rx),
+            cached_reason: None,
+        })
+    }
+
+    fn spawn_job_monitored(self) -> std::io::Result<WorrywartChild> {
+        use crate::pump::{create_process_for_job, to_wide_null};
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+
+        let command_line = build_command_line(&self.program, &self.args);
+        let environment = if self.env_clear && self.envs.is_empty() {
+            Some(vec![0u16])
+        } else {
+            None
+        };
+        let current_directory = self.current_dir.as_deref().map(to_wide_null);
+
+        let params = JobSpawnParams {
+            application_name: None,
+            command_line,
+            environment,
+            current_directory,
+            job_handle: self.job.raw(),
+        };
+
+        let pi = create_process_for_job(&params)?;
+
+        // Register the child with the IOCP listener.
+        let mut iocp_guard = self.iocp.lock().unwrap();
+        if iocp_guard.is_none() {
+            *iocp_guard = Some(Iocp::start(self.job.raw())?);
+        }
+        let (exit_tx, exit_rx) = mpsc::sync_channel::<TerminationResult>(1);
+        iocp_guard
+            .as_ref()
+            .unwrap()
+            .register(pi.dwProcessId, exit_tx);
+        drop(iocp_guard);
+
+        // The thread handle is not needed for monitoring; close it.
+        if !pi.hThread.is_null() && pi.hThread != INVALID_HANDLE_VALUE {
+            unsafe { CloseHandle(pi.hThread) };
+        }
+
+        Ok(WorrywartChild {
+            pid: pi.dwProcessId,
+            process_handle: pi.hProcess,
+            thread_handle: INVALID_HANDLE_VALUE,
             exit_rx: Some(exit_rx),
             cached_reason: None,
         })
@@ -353,9 +489,12 @@ impl WorrywartChild {
         }
 
         let reason = if let Some(ref rx) = self.exit_rx {
-            rx.recv().map_err(|_| {
-                std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pump thread gone")
-            })??
+            match rx.recv() {
+                Ok(result) => result?,
+                // Channel closed (pump/IOCP thread gone) — fall back to a plain
+                // OS-level wait so the caller isn't left hanging.
+                Err(_) => self.wait_plain()?,
+            }
         } else {
             self.wait_plain()?
         };

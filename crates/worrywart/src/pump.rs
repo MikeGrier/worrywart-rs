@@ -27,9 +27,13 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 };
 use windows_sys::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-    CREATE_UNICODE_ENVIRONMENT, DEBUG_PROCESS, EXTENDED_STARTUPINFO_PRESENT,
-    PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    UpdateProcThreadAttribute, CREATE_UNICODE_ENVIRONMENT, DEBUG_PROCESS,
+    EXTENDED_STARTUPINFO_PRESENT, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
+
+// ProcThreadAttributeValue(13, FALSE, TRUE, FALSE) — not always exported by windows-sys.
+const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002_000D;
 
 // ContinueDebugEvent status codes (NTSTATUS - i32 in windows-sys 0.59)
 const DBG_CONTINUE: i32 = 0x00010002_u32 as i32;
@@ -77,15 +81,28 @@ pub struct SpawnRequest {
     pub stdout_handle: HANDLE,
     pub stderr_handle: HANDLE,
     pub use_stdio_handles: bool,
+    /// Job Object handle to assign the child to atomically at creation.
+    /// Pass `INVALID_HANDLE_VALUE` (or null) to skip job assignment.
+    pub job_handle: HANDLE,
 }
+
+/// Minimal parameters for spawning a non-debug (job-only) child.
+pub struct JobSpawnParams {
+    pub application_name: Option<Vec<u16>>,
+    pub command_line: Vec<u16>,
+    pub environment: Option<Vec<u16>>,
+    pub current_directory: Option<Vec<u16>>,
+    pub job_handle: HANDLE,
+}
+
+// SAFETY: HANDLE is *mut c_void; safe to transfer between threads on Windows.
+unsafe impl Send for JobSpawnParams {}
 
 pub type TerminationResult = Result<crate::TerminationReason, std::io::Error>;
 
 // SAFETY: HANDLE is a Win32 *mut c_void, but Windows guarantees it is safe
 // to transfer kernel handles between threads in the same process.
 unsafe impl Send for SpawnRequest {}
-
-/// Reply from the pump after (or instead of) `CreateProcess`.
 pub struct SpawnResponse {
     pub pid: u32,
     pub process_handle: HANDLE,
@@ -246,73 +263,131 @@ fn pump_loop(rx: mpsc::Receiver<PumpMessage>) {
 
 /// Create the child process with DEBUG_PROCESS set.
 fn create_debugged_child(req: &SpawnRequest) -> std::io::Result<(PROCESS_INFORMATION, bool)> {
-    let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    let pi = create_process_impl(
+        req.application_name.as_deref(),
+        &req.command_line,
+        req.environment.as_deref(),
+        req.current_directory.as_deref(),
+        req.job_handle,
+        req.stdin_handle,
+        req.stdout_handle,
+        req.stderr_handle,
+        req.use_stdio_handles,
+        true,
+    )?;
+    Ok((pi, false))
+}
 
-    // Build STARTUPINFOEXW with an empty attribute list (no job list yet —
-    // that's Phase 2).  We still need EXTENDED_STARTUPINFO_PRESENT.
-    const ATTR_COUNT: usize = 0;
+/// Create a child process without a debugger, assigning it to `job_handle`.
+pub(crate) fn create_process_for_job(
+    params: &JobSpawnParams,
+) -> std::io::Result<PROCESS_INFORMATION> {
+    create_process_impl(
+        params.application_name.as_deref(),
+        &params.command_line,
+        params.environment.as_deref(),
+        params.current_directory.as_deref(),
+        params.job_handle,
+        INVALID_HANDLE_VALUE,
+        INVALID_HANDLE_VALUE,
+        INVALID_HANDLE_VALUE,
+        false,
+        false,
+    )
+}
+
+/// Shared `CreateProcessW` implementation.
+///
+/// When `debug == true`, `DEBUG_PROCESS` is added to the creation flags.
+/// When `job_handle` is a valid handle, the process is atomically assigned to
+/// that job via `PROC_THREAD_ATTRIBUTE_JOB_LIST`.
+#[allow(clippy::too_many_arguments)]
+fn create_process_impl(
+    application_name: Option<&[u16]>,
+    command_line: &[u16],
+    environment: Option<&[u16]>,
+    current_directory: Option<&[u16]>,
+    job_handle: HANDLE,
+    stdin_handle: HANDLE,
+    stdout_handle: HANDLE,
+    stderr_handle: HANDLE,
+    use_stdio_handles: bool,
+    debug: bool,
+) -> std::io::Result<PROCESS_INFORMATION> {
+    let has_job = !job_handle.is_null() && job_handle != INVALID_HANDLE_VALUE;
+    let attr_count: u32 = if has_job { 1 } else { 0 };
+
     let mut attr_list_size: usize = 0;
-
-    // Query required size for the attribute list.
     unsafe {
-        InitializeProcThreadAttributeList(
-            std::ptr::null_mut(),
-            ATTR_COUNT as u32,
-            0,
-            &mut attr_list_size,
-        );
+        InitializeProcThreadAttributeList(std::ptr::null_mut(), attr_count, 0, &mut attr_list_size);
     }
 
     let mut attr_list_buf: Vec<u8> = vec![0u8; attr_list_size];
     let attr_list_ptr = attr_list_buf.as_mut_ptr() as *mut _;
 
     let init_ok = unsafe {
-        InitializeProcThreadAttributeList(attr_list_ptr, ATTR_COUNT as u32, 0, &mut attr_list_size)
+        InitializeProcThreadAttributeList(attr_list_ptr, attr_count, 0, &mut attr_list_size)
     };
     if init_ok == FALSE {
         return Err(std::io::Error::last_os_error());
+    }
+
+    if has_job {
+        let ok = unsafe {
+            UpdateProcThreadAttribute(
+                attr_list_ptr,
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                &job_handle as *const HANDLE as *const _,
+                std::mem::size_of::<HANDLE>(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == FALSE {
+            unsafe { DeleteProcThreadAttributeList(attr_list_ptr) };
+            return Err(std::io::Error::last_os_error());
+        }
     }
 
     let mut si: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
     si.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
     si.lpAttributeList = attr_list_ptr;
 
-    if req.use_stdio_handles {
+    if use_stdio_handles {
         si.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
-        si.StartupInfo.hStdInput = req.stdin_handle;
-        si.StartupInfo.hStdOutput = req.stdout_handle;
-        si.StartupInfo.hStdError = req.stderr_handle;
+        si.StartupInfo.hStdInput = stdin_handle;
+        si.StartupInfo.hStdOutput = stdout_handle;
+        si.StartupInfo.hStdError = stderr_handle;
     }
 
-    let creation_flags: PROCESS_CREATION_FLAGS =
-        DEBUG_PROCESS | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
+    let mut flags: PROCESS_CREATION_FLAGS =
+        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
+    if debug {
+        flags |= DEBUG_PROCESS;
+    }
 
-    let app_name_ptr = req
-        .application_name
-        .as_deref()
+    let app_name_ptr = application_name
         .map(|s| s.as_ptr())
         .unwrap_or(std::ptr::null());
 
-    let env_ptr = req
-        .environment
-        .as_deref()
+    let env_ptr = environment
         .map(|e| e.as_ptr() as *const _)
         .unwrap_or(std::ptr::null());
 
-    let dir_ptr = req
-        .current_directory
-        .as_deref()
+    let dir_ptr = current_directory
         .map(|d| d.as_ptr())
         .unwrap_or(std::ptr::null());
 
+    let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
     let ok = unsafe {
         CreateProcessW(
             app_name_ptr,
-            req.command_line.as_ptr() as *mut _,
-            std::ptr::null(), // process security attributes
-            std::ptr::null(), // thread security attributes
-            TRUE,             // inherit handles
-            creation_flags,
+            command_line.as_ptr() as *mut _,
+            std::ptr::null(),
+            std::ptr::null(),
+            TRUE,
+            flags,
             env_ptr,
             dir_ptr,
             &si.StartupInfo,
@@ -326,7 +401,7 @@ fn create_debugged_child(req: &SpawnRequest) -> std::io::Result<(PROCESS_INFORMA
         return Err(std::io::Error::last_os_error());
     }
 
-    Ok((pi, false))
+    Ok(pi)
 }
 
 /// Dispatch one debug event and return the `ContinueDebugEvent` status code.

@@ -22,6 +22,8 @@
 
 pub mod compat;
 pub mod core;
+#[cfg(windows)]
+pub(crate) mod iocp;
 mod monitor;
 #[cfg(windows)]
 pub(crate) mod pump;
