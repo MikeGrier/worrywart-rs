@@ -20,9 +20,14 @@
 //! additions are `.monitor()` on the builder and `.wait_diagnosed()` on the
 //! child.
 
+pub mod compat;
 pub mod core;
 mod monitor;
 mod termination;
 
 pub use monitor::Monitor;
 pub use termination::TerminationReason;
+
+// Re-export compat types at the crate root so callers can write
+// `use worrywart::{Command, Child}` as a drop-in for `tokio::process`.
+pub use compat::{Child, Command};
