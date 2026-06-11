@@ -20,6 +20,7 @@
 //! additions are `.monitor()` on the builder and `.wait_diagnosed()` on the
 //! child.
 
+pub mod core;
 mod monitor;
 mod termination;
 
