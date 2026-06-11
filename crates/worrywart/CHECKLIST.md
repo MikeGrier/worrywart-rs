@@ -13,7 +13,7 @@ One item, one commit. Tests must pass before committing.
 
 - [x] P0-1: Add `tokio` (with `process` feature) and `windows-sys` dependencies to `crates/worrywart/Cargo.toml`
 - [ ] P0-2: Define `TerminationReason` enum with variants `CleanExit`, `Crash`, `FastFail`, `ExternalKill`, `Unknown`
-- [ ] P0-3: Define `Monitor` enum with variants `DebugApi`, `JobObject`, `Sentinel`
+- [x] P0-3: Define `Monitor` enum with variants `DebugApi`, `JobObject`, `Sentinel`
 - [ ] P0-4: Define core types `Worrywart`, `WorrywartCommand`, `WorrywartChild` as stubs (`todo!()` bodies; all methods compile but are unimplemented)
 - [ ] P0-5: Define tokio-compat types `Command` and `Child` that delegate to `tokio::process`; `wait_diagnosed()` returns `TerminationReason::Unknown`
 - [ ] P0-6: Add integration test: spawn a real child process via the compat `Command`, call `wait()`, assert exit status is success

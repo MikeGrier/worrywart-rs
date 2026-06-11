@@ -20,6 +20,8 @@
 //! additions are `.monitor()` on the builder and `.wait_diagnosed()` on the
 //! child.
 
+mod monitor;
 mod termination;
 
+pub use monitor::Monitor;
 pub use termination::TerminationReason;
