@@ -18,6 +18,8 @@
 
 use std::sync::mpsc;
 
+use tracing::{debug, trace};
+
 use windows_sys::Win32::Foundation::SetHandleInformation;
 use windows_sys::Win32::Foundation::{
     CloseHandle, FALSE, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, TRUE,
@@ -88,6 +90,7 @@ pub fn create() -> std::io::Result<SentinelPipe> {
         .spawn(move || sentinel_thread(read_raw as HANDLE, tx))
         .expect("failed to spawn sentinel listener thread");
 
+    trace!("sentinel: pipe created");
     Ok(SentinelPipe {
         write_handle,
         sentinel_rx: rx,
@@ -125,6 +128,11 @@ fn sentinel_thread(read_handle: HANDLE, tx: mpsc::SyncSender<bool>) {
     }
 
     unsafe { CloseHandle(read_handle) };
+    if received {
+        debug!("sentinel: sentinel message received");
+    } else {
+        debug!("sentinel: pipe closed without sentinel");
+    }
     // Ignore send error: WorrywartChild may have been dropped without waiting.
     let _ = tx.send(received);
 }

@@ -14,7 +14,8 @@ homepage.workspace      = true
 documentation.workspace = true
 
 [dependencies]
-tokio = { version = "1.52.3", features = ["process"] }
+tokio   = { version = "1.52.3", features = ["process"] }
+tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

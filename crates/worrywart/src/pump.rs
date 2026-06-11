@@ -19,6 +19,8 @@ use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::mpsc;
 
+use tracing::{debug, trace, warn};
+
 use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE};
 use windows_sys::Win32::System::Diagnostics::Debug::{
     ContinueDebugEvent, WaitForDebugEvent, CREATE_PROCESS_DEBUG_EVENT, CREATE_THREAD_DEBUG_EVENT,
@@ -203,6 +205,8 @@ fn pump_loop(rx: mpsc::Receiver<PumpMessage>) {
                     let result = create_debugged_child(&req);
                     match result {
                         Ok((pi, past_loader)) => {
+                            let pid = pi.dwProcessId;
+                            debug!(pid, "pump: child spawned");
                             let entry = ChildEntry {
                                 pid: pi.dwProcessId,
                                 process_handle: pi.hProcess,
@@ -220,11 +224,13 @@ fn pump_loop(rx: mpsc::Receiver<PumpMessage>) {
                             }));
                         }
                         Err(e) => {
+                            warn!(err = %e, "pump: spawn failed");
                             let _ = resp_tx.send(Err(e));
                         }
                     }
                 }
                 PumpMessage::Shutdown => {
+                    debug!("pump: shutdown requested");
                     // Drain remaining EXIT_PROCESS events then return.
                     // For now: just return; children will be killed when
                     // their handles are closed.
@@ -415,6 +421,7 @@ fn dispatch_event(children: &mut HashMap<u32, ChildEntry>, event: &DEBUG_EVENT) 
             if h != INVALID_HANDLE_VALUE && !h.is_null() {
                 unsafe { CloseHandle(h) };
             }
+            trace!(pid, "pump: create-process event");
             // The initial loader breakpoint hasn't fired yet.
             DBG_CONTINUE
         }
@@ -431,6 +438,7 @@ fn dispatch_event(children: &mut HashMap<u32, ChildEntry>, event: &DEBUG_EVENT) 
                     // Initial loader breakpoint — mark passed and optionally
                     // set affinity before continuing.
                     child.past_loader_bp = true;
+                    trace!(pid, "pump: loader breakpoint");
                     if child.affinity_mask != 0 {
                         unsafe {
                             windows_sys::Win32::System::Threading::SetProcessAffinityMask(
@@ -446,6 +454,13 @@ fn dispatch_event(children: &mut HashMap<u32, ChildEntry>, event: &DEBUG_EVENT) 
                     // Second-chance exception — record for correlation with EXIT_PROCESS.
                     let is_fast_fail = code == exception_code::STACK_BUFFER_OVERRUN
                         || code == exception_code::FATAL_APP_EXIT;
+                    debug!(
+                        pid,
+                        code = code as u32,
+                        address,
+                        is_fast_fail,
+                        "pump: second-chance exception"
+                    );
                     child.pending_exception = Some(PendingException {
                         code,
                         address,
@@ -463,6 +478,7 @@ fn dispatch_event(children: &mut HashMap<u32, ChildEntry>, event: &DEBUG_EVENT) 
             if let Some(child) = children.remove(&pid) {
                 let exit_code = unsafe { event.u.ExitProcess.dwExitCode };
                 let reason = classify_exit(child.pending_exception, exit_code);
+                debug!(pid, exit_code, ?reason, "pump: child exited");
                 let _ = child.exit_tx.send(Ok(reason));
                 // Close our copies of the process/thread handles.
                 unsafe {
@@ -491,6 +507,7 @@ fn dispatch_event(children: &mut HashMap<u32, ChildEntry>, event: &DEBUG_EVENT) 
         RIP_EVENT => {
             // System integrity error — treat as ExternalKill.
             if let Some(child) = children.remove(&pid) {
+                warn!(pid, "pump: RIP event");
                 let status = make_exit_status_pub(1);
                 let _ = child
                     .exit_tx

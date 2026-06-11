@@ -10,6 +10,8 @@
 use std::collections::HashMap;
 use std::sync::mpsc;
 
+use tracing::{debug, trace};
+
 use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::JobObjects::{
     JobObjectAssociateCompletionPortInformation, SetInformationJobObject,
@@ -116,6 +118,7 @@ impl Drop for Iocp {
 }
 
 fn iocp_loop(iocp: HANDLE, rx: mpsc::Receiver<IocpMessage>) {
+    debug!("iocp: listener started");
     let mut waiters: HashMap<u32, mpsc::SyncSender<IocpResult>> = HashMap::new();
     // Buffer for notifications that arrive before the waiter registers.
     let mut pending: HashMap<u32, IocpResult> = HashMap::new();
@@ -125,6 +128,7 @@ fn iocp_loop(iocp: HANDLE, rx: mpsc::Receiver<IocpMessage>) {
         while let Ok(msg) = rx.try_recv() {
             match msg {
                 IocpMessage::Register { pid, exit_tx } => {
+                    trace!(pid, "iocp: waiter registered");
                     if let Some(result) = pending.remove(&pid) {
                         let _ = exit_tx.send(result);
                     } else {
@@ -146,6 +150,7 @@ fn iocp_loop(iocp: HANDLE, rx: mpsc::Receiver<IocpMessage>) {
             // This matters when the job closes (killing children) just before
             // the IOCP receives the shutdown sentinel.
             drain_remaining(iocp, &mut waiters, &mut pending);
+            debug!("iocp: listener shutdown");
             unsafe { CloseHandle(iocp) };
             return;
         }
@@ -177,6 +182,7 @@ fn dispatch_notification(
     }
 
     let pid = overlapped as usize as u32;
+    debug!(pid, msg_type, "iocp: exit notification");
     let result = classify_iocp_exit(pid, msg_type);
 
     if let Some(tx) = waiters.remove(&pid) {
@@ -217,17 +223,11 @@ fn drain_remaining(
 fn classify_iocp_exit(pid: u32, _msg_type: u32) -> IocpResult {
     let code = get_exit_code(pid).unwrap_or(0);
 
-    // Distinguish crash-from-exception from normal or kill-on-close termination.
-    //
-    // Windows exception codes (STATUS_ACCESS_VIOLATION, STATUS_STACK_BUFFER_OVERRUN,
-    // etc.) all have the high bit set (≥ 0x8000_0000).  A process killed by job
-    // kill-on-close exits with code 0, so this threshold cleanly separates the
-    // two cases without needing to distinguish msg 7 from msg 8.
     if code >= 0x8000_0000 {
+        debug!(pid, code, "iocp: classified as Crash");
         Ok(crate::TerminationReason::Crash { code, address: 0 })
     } else {
-        // Normal exit or killed by the job mechanism.
-        // Phase 3 (sentinel) will distinguish CleanExit from ExternalKill.
+        debug!(pid, code, "iocp: classified as Unknown (pending sentinel)");
         Ok(crate::TerminationReason::Unknown(
             crate::pump::make_exit_status_pub(code),
         ))
