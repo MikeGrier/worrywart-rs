@@ -22,7 +22,10 @@ async fn compat_spawn_and_wait_success() {
 
     let mut child = cmd.spawn().expect("failed to spawn child");
     let status = child.wait().await.expect("failed to wait");
-    assert!(status.success(), "expected success exit status, got {status}");
+    assert!(
+        status.success(),
+        "expected success exit status, got {status}"
+    );
 }
 
 /// `wait_diagnosed()` returns `TerminationReason::Unknown` in Phase 0

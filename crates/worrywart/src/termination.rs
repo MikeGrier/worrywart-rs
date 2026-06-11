@@ -50,14 +50,31 @@ impl TerminationReason {
     pub fn exit_status(&self) -> ExitStatus {
         match self {
             TerminationReason::CleanExit(s) => *s,
-            TerminationReason::Crash { .. } => {
-                // Crash exits have a non-zero code; we return the status
-                // captured at EXIT_PROCESS time.  Callers that need the
-                // exception code should match on the variant directly.
-                todo!("Phase 1: return captured exit status for Crash")
+            TerminationReason::Crash { code, .. } => {
+                // Synthesise an ExitStatus from the exception code; callers
+                // that need the exception address should match the variant.
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::ExitStatusExt;
+                    ExitStatus::from_raw(*code)
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = code;
+                    unreachable!("Crash variant is only produced on Windows")
+                }
             }
-            TerminationReason::FastFail(_) => {
-                todo!("Phase 1: return captured exit status for FastFail")
+            TerminationReason::FastFail(code) => {
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::ExitStatusExt;
+                    ExitStatus::from_raw(*code)
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = code;
+                    unreachable!("FastFail variant is only produced on Windows")
+                }
             }
             TerminationReason::ExternalKill(s) => *s,
             TerminationReason::Unknown(s) => *s,
