@@ -21,6 +21,9 @@ jobs:
   publish:
     name: publish to crates.io
     runs-on: ubuntu-latest
+    # The crates.io API token is stored as a secret on the `crates-io`
+    # environment, so the job must opt into that environment to read it.
+    environment: crates-io
     steps:
       - uses: actions/checkout@v6
 
