@@ -289,8 +289,9 @@ impl WorrywartCommand {
             stdout_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             stderr_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             use_stdio_handles: false,
-            // Sentinel is not used in the debug-pump path; no handles to inherit.
-            inherit_handles: false,
+            // Inherit handles when Sentinel is active so the child receives the
+            // sentinel pipe write end.  Otherwise no handles need propagation.
+            inherit_handles: self.monitors.contains(&Monitor::Sentinel),
             // Always assign to the job so kill-on-close applies.
             job_handle: self.job.raw(),
         };
@@ -541,12 +542,15 @@ fn make_exit_status(code: u32) -> std::process::ExitStatus {
 #[cfg(windows)]
 impl WorrywartChild {
     fn from_std(child: std::process::Child, pid: u32) -> Self {
-        // Drop the std::process::Child — we've already captured its PID.
-        // The process keeps running; we hold no handle in plain mode.
-        drop(child);
+        // Extract the raw process handle so that wait_plain() and kill() work
+        // without reopening by PID (which has a PID-reuse hazard).
+        // Ownership of the handle transfers here; Drop closes it.
+        use std::os::windows::io::IntoRawHandle;
+        let process_handle =
+            child.into_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
         WorrywartChild {
             pid,
-            process_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
+            process_handle,
             thread_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             exit_rx: None,
             cached_reason: None,
@@ -598,30 +602,44 @@ impl WorrywartChild {
     }
 
     fn wait_plain(&self) -> std::io::Result<TerminationReason> {
-        use windows_sys::Win32::Foundation::{FALSE, WAIT_OBJECT_0};
-        use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_SYNCHRONIZE, WaitForSingleObject,
-        };
+        use windows_sys::Win32::Foundation::{FALSE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject};
 
-        let handle = unsafe {
-            OpenProcess(
-                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                FALSE,
-                self.pid,
-            )
-        };
-        if handle.is_null() {
-            return Err(std::io::Error::last_os_error());
-        }
+        // Prefer the handle we already own; only fall back to OpenProcess when
+        // none was captured (shouldn't happen after the from_std() fix but kept
+        // as a belt-and-suspenders fallback).
+        let (handle, owned) =
+            if self.process_handle != INVALID_HANDLE_VALUE && !self.process_handle.is_null() {
+                (self.process_handle, false)
+            } else {
+                use windows_sys::Win32::System::Threading::{
+                    OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+                };
+                let h = unsafe {
+                    OpenProcess(
+                        PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                        FALSE,
+                        self.pid,
+                    )
+                };
+                if h.is_null() {
+                    return Err(std::io::Error::last_os_error());
+                }
+                (h, true)
+            };
+
         let wait = unsafe { WaitForSingleObject(handle, INFINITE) };
         if wait != WAIT_OBJECT_0 {
-            unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+            if owned {
+                unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+            }
             return Err(std::io::Error::last_os_error());
         }
         let mut code: u32 = 0;
         let ok = unsafe { GetExitCodeProcess(handle, &mut code) };
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+        if owned {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+        }
         if ok == FALSE {
             return Err(std::io::Error::last_os_error());
         }

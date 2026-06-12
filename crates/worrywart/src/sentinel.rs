@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Michael Grier
 
-//! Sentinel named-pipe support (monitor side).
+//! Sentinel anonymous-pipe support (monitor side).
 //!
 //! For each spawn that includes [`Monitor::Sentinel`], the monitor:
 //!

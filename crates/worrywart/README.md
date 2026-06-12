@@ -14,10 +14,10 @@ fn main() -> std::io::Result<()> {
     use worrywart::Monitor;
 
     let worrywart = Worrywart::new()?;
-    let mut child = WorrywartCommand::new(&worrywart, "my-program")
+    let mut child = worrywart.command("my-program")
         .arg("--flag")
         .monitor(Monitor::DebugApi)
-        .spawn()?;
+        .spawn()?
 
     let reason = child.wait_diagnosed()?;
     println!("{reason:?}");
