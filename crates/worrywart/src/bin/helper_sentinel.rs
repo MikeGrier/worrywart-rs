@@ -25,13 +25,22 @@ fn main() {
             WriteFile(
                 handle,
                 msg.as_ptr() as *const _,
-                8,
+                msg.len() as u32,
                 &mut written,
                 std::ptr::null_mut(),
             )
         };
-        let _ = ok;
-        let _ = written;
+        // The Phase 3 test relies on this message being delivered in full; a
+        // failed or short write would otherwise be misclassified downstream as
+        // ExternalKill.  Fail fast with a distinctive exit code so the cause is
+        // obvious rather than silently corrupting the test outcome.
+        if ok == windows_sys::Win32::Foundation::FALSE || written != msg.len() as u32 {
+            eprintln!(
+                "helper_sentinel: sentinel WriteFile failed (ok={ok}, written={written}, expected={})",
+                msg.len()
+            );
+            std::process::exit(2);
+        }
     }
 }
 

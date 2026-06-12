@@ -413,6 +413,24 @@ fn build_env_block(env_clear: bool, envs: &[(OsString, OsString)]) -> Option<Vec
         pairs.push((k.clone(), v.clone()));
     }
 
+    // `CreateProcessW` with `CREATE_UNICODE_ENVIRONMENT` requires the block to
+    // be sorted by variable name, case-insensitively, in Unicode code-unit
+    // order.  `std::env::vars_os()` does not guarantee that order, so sort
+    // explicitly.  Environment variable names are ASCII in practice, so an
+    // ASCII-uppercase fold is sufficient for the case-insensitive comparison.
+    fn upper_wide(name: &OsStr) -> Vec<u16> {
+        name.encode_wide()
+            .map(|u| {
+                if (b'a' as u16..=b'z' as u16).contains(&u) {
+                    u - (b'a' - b'A') as u16
+                } else {
+                    u
+                }
+            })
+            .collect()
+    }
+    pairs.sort_by_key(|(a, _)| upper_wide(a));
+
     let mut block: Vec<u16> = Vec::new();
     for (k, v) in &pairs {
         block.extend(k.encode_wide());
