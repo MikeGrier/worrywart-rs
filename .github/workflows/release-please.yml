@@ -2,8 +2,7 @@
 name: release-please
 
 # Creates or updates a "Release PR" on every push to main.
-# When the Release PR is merged it creates the tag + GitHub Release
-# and triggers the `publish-crate` job below.
+# When the Release PR is merged it creates the tag + GitHub Release.
 #
 # Commit message conventions that drive version bumps:
 #   fix: ...             -> patch  (0.1.2 -> 0.1.3)
@@ -16,8 +15,8 @@ name: release-please
 #   - Cargo.lock (updated by the `update-lockfile` job below)
 #   - CHANGELOG.md
 #
-# After merging the Release PR the tag v{version} is created and
-# `publish-crate` runs `cargo publish` to crates.io.
+# After merging the Release PR the tag v{version} is created.
+# Publish to crates.io is done manually after the tag is created.
 
 on:
   push:

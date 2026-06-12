@@ -12,7 +12,7 @@
 use std::ffi::{OsStr, OsString};
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use crate::iocp::Iocp;
 use crate::pump::{Pump, SpawnRequest, SpawnResponse, TerminationResult};
@@ -67,8 +67,8 @@ impl Worrywart {
     /// Creates a new `Worrywart` instance and its associated Job Object.
     pub fn new() -> std::io::Result<Self> {
         use windows_sys::Win32::System::JobObjects::{
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
             JobObjectExtendedLimitInformation, SetInformationJobObject,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         };
 
         let job = unsafe {
@@ -308,7 +308,7 @@ impl WorrywartCommand {
     }
 
     fn spawn_job_monitored(self) -> std::io::Result<WorrywartChild> {
-        use crate::pump::{create_process_for_job, to_wide_null, JobSpawnParams};
+        use crate::pump::{JobSpawnParams, create_process_for_job, to_wide_null};
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 
         let command_line = build_command_line(&self.program, &self.args);
@@ -543,11 +543,7 @@ impl WorrywartChild {
 
     /// Returns the OS process identifier.
     pub fn id(&self) -> Option<u32> {
-        if self.pid == 0 {
-            None
-        } else {
-            Some(self.pid)
-        }
+        if self.pid == 0 { None } else { Some(self.pid) }
     }
 
     /// Waits for the child to exit and returns its exit status.
@@ -559,7 +555,10 @@ impl WorrywartChild {
     /// Waits for the child to exit and returns the classified [`TerminationReason`].
     pub fn wait_diagnosed(&mut self) -> std::io::Result<TerminationReason> {
         if let Some(cached) = self.cached_reason.take() {
-            return Ok(cached.into_reason());
+            let reason = cached.into_reason();
+            // Re-cache so subsequent calls don't block on a closed channel.
+            self.cached_reason = Some(CachedReason::from_reason(&reason));
+            return Ok(reason);
         }
 
         let raw = if let Some(ref rx) = self.exit_rx {
@@ -586,8 +585,8 @@ impl WorrywartChild {
     fn wait_plain(&self) -> std::io::Result<TerminationReason> {
         use windows_sys::Win32::Foundation::{FALSE, WAIT_OBJECT_0};
         use windows_sys::Win32::System::Threading::{
-            GetExitCodeProcess, OpenProcess, WaitForSingleObject, INFINITE,
-            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+            GetExitCodeProcess, INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+            PROCESS_SYNCHRONIZE, WaitForSingleObject,
         };
 
         let handle = unsafe {

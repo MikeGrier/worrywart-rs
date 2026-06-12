@@ -26,8 +26,8 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::Storage::FileSystem::ReadFile;
-use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::IO::OVERLAPPED;
+use windows_sys::Win32::System::Pipes::CreatePipe;
 
 /// Environment variable used to communicate the sentinel write handle to the
 /// child process.  Its value is the decimal representation of the raw
@@ -81,7 +81,15 @@ pub fn create() -> std::io::Result<SentinelPipe> {
 
     // The read end must NOT be inherited — the child must not hold it open,
     // or the pipe would never close when the child exits.
-    unsafe { SetHandleInformation(read_handle, HANDLE_FLAG_INHERIT, 0) };
+    let ok = unsafe { SetHandleInformation(read_handle, HANDLE_FLAG_INHERIT, 0) };
+    if ok == FALSE {
+        let err = std::io::Error::last_os_error();
+        unsafe {
+            CloseHandle(read_handle);
+            CloseHandle(write_handle);
+        }
+        return Err(err);
+    }
 
     let (tx, rx) = mpsc::sync_channel::<bool>(1);
     let read_raw = read_handle as usize;

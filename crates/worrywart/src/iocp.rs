@@ -13,15 +13,15 @@ use std::sync::mpsc;
 use tracing::{debug, trace};
 
 use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::System::IO::{
+    CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED, PostQueuedCompletionStatus,
+};
 use windows_sys::Win32::System::JobObjects::{
-    JobObjectAssociateCompletionPortInformation, SetInformationJobObject,
-    JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
+    JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JobObjectAssociateCompletionPortInformation,
+    SetInformationJobObject,
 };
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-};
-use windows_sys::Win32::System::IO::{
-    CreateIoCompletionPort, GetQueuedCompletionStatus, PostQueuedCompletionStatus, OVERLAPPED,
 };
 
 // Not exported by windows-sys 0.59; raw values from the Windows SDK.
@@ -220,10 +220,13 @@ fn drain_remaining(
     }
 }
 
-fn classify_iocp_exit(pid: u32, _msg_type: u32) -> IocpResult {
+fn classify_iocp_exit(pid: u32, msg_type: u32) -> IocpResult {
     let code = get_exit_code(pid).unwrap_or(0);
 
-    if code >= 0x8000_0000 {
+    // Use the kernel-supplied message type rather than a high-bit heuristic:
+    // JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS (8) means the process was
+    // terminated abnormally; JOB_OBJECT_MSG_EXIT_PROCESS (7) is a clean exit.
+    if msg_type == JOB_OBJECT_MSG_ABNORMAL_EXIT_PROCESS {
         debug!(pid, code, "iocp: classified as Crash");
         Ok(crate::TerminationReason::Crash { code, address: 0 })
     } else {
@@ -243,9 +246,5 @@ fn get_exit_code(pid: u32) -> Option<u32> {
     let mut code: u32 = 0;
     let ok = unsafe { GetExitCodeProcess(handle, &mut code) };
     unsafe { CloseHandle(handle) };
-    if ok == FALSE {
-        None
-    } else {
-        Some(code)
-    }
+    if ok == FALSE { None } else { Some(code) }
 }

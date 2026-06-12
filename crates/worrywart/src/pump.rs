@@ -23,15 +23,14 @@ use tracing::{debug, trace, warn};
 
 use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE, TRUE};
 use windows_sys::Win32::System::Diagnostics::Debug::{
-    ContinueDebugEvent, WaitForDebugEvent, CREATE_PROCESS_DEBUG_EVENT, CREATE_THREAD_DEBUG_EVENT,
-    DEBUG_EVENT, EXCEPTION_DEBUG_EVENT, EXIT_PROCESS_DEBUG_EVENT, EXIT_THREAD_DEBUG_EVENT,
-    LOAD_DLL_DEBUG_EVENT, OUTPUT_DEBUG_STRING_EVENT, RIP_EVENT, UNLOAD_DLL_DEBUG_EVENT,
+    CREATE_PROCESS_DEBUG_EVENT, CREATE_THREAD_DEBUG_EVENT, ContinueDebugEvent, DEBUG_EVENT,
+    EXCEPTION_DEBUG_EVENT, EXIT_PROCESS_DEBUG_EVENT, EXIT_THREAD_DEBUG_EVENT, LOAD_DLL_DEBUG_EVENT,
+    OUTPUT_DEBUG_STRING_EVENT, RIP_EVENT, UNLOAD_DLL_DEBUG_EVENT, WaitForDebugEvent,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-    UpdateProcThreadAttribute, CREATE_UNICODE_ENVIRONMENT, DEBUG_PROCESS,
-    EXTENDED_STARTUPINFO_PRESENT, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DEBUG_PROCESS, DeleteProcThreadAttributeList,
+    EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList, PROCESS_CREATION_FLAGS,
+    PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute,
 };
 
 // ProcThreadAttributeValue(13, FALSE, TRUE, FALSE) — not always exported by windows-sys.
@@ -195,7 +194,12 @@ fn pump_loop(rx: mpsc::Receiver<PumpMessage>) {
         // When children are active, non-blocking check so we can call
         // WaitForDebugEvent promptly.
         let msg = if children.is_empty() {
-            rx.recv().ok()
+            // recv() returns Err when the sender is dropped; exit the loop
+            // so we don't spin forever with nothing to monitor.
+            match rx.recv() {
+                Ok(msg) => Some(msg),
+                Err(_) => break,
+            }
         } else {
             rx.try_recv().ok()
         };

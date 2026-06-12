@@ -20,8 +20,8 @@ Requires a recent Rust toolchain (MSRV: see `[workspace.package].rust-version`
 in [Cargo.toml](Cargo.toml)).
 
 ```powershell
-cargo build --workspace --release
-cargo test --workspace
+cargo build --release
+cargo test
 ```
 
 ## Release pipeline
@@ -33,8 +33,8 @@ Versioning, tagging, and publishing are automated:
    (`fix:`, `feat:`, `feat!:`).
 2. [`release-please`](.github/workflows/release-please.yml) opens or updates
    a Release PR that bumps the workspace version and the changelog.
-3. Merging the Release PR creates a `v<version>` tag and publishes the crate
-   to [crates.io](https://crates.io) automatically.
+3. Merging the Release PR creates a `v<version>` tag; publish to
+   [crates.io](https://crates.io) is then done manually.
 
 ## License
 
