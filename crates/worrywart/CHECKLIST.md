@@ -56,7 +56,7 @@ One item, one commit. Tests must pass before committing.
 - [x] P5-2: Audit tokio-compat `Command`/`Child` surface against `tokio::process` API; document any intentional gaps in rustdoc
 - [x] P5-3: Write rustdoc for all public items in `worrywart` and `worrywart-client`; `cargo_doc` must produce zero warnings
 - [x] P5-4: `cargo_publish --dry-run` passes cleanly for both `worrywart` and `worrywart-client`
-- [ ] P5-5: Tag `v0.1.0` and publish both crates to crates.io
+- [x] P5-5: Tag `v0.1.0` and publish both crates to crates.io
 ---
 
 ## Phase 5 — C API (post-1.0)
