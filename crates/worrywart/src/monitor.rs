@@ -32,11 +32,14 @@ pub enum Monitor {
 
     /// **Technique 3 — In-Process Sentinel.**
     ///
-    /// Passes a named pipe handle to the child.  The child calls
-    /// `worrywart_notify_exit()` (from the `worrywart-client` crate) before
-    /// intentional exit.  Resolves the `CleanExit` vs. `ExternalKill`
-    /// ambiguity definitively.
+    /// Passes an inheritable anonymous-pipe write handle to the child (its
+    /// value is communicated via the `WORRYWART_SENTINEL_HANDLE` environment
+    /// variable).  Before exiting intentionally, the child writes a small
+    /// sentinel message to that handle; the monitor uses its presence to
+    /// resolve the `CleanExit` vs. `ExternalKill` ambiguity definitively.
     ///
-    /// Requires the child to link against `worrywart-client`.
+    /// A future C client library (`worrywart-client`) will provide a helper
+    /// for emitting this message; today the child writes it directly (see the
+    /// Phase 3 integration tests).
     Sentinel,
 }

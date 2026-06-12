@@ -43,10 +43,10 @@ One item, one commit. Tests must pass before committing.
 
 ## Phase 3 — Technique 3: Sentinel
 
-- [x] P3-1: Implement sentinel named pipe on the monitor side: create the pipe in `WorrywartCommand::spawn()`, inherit the write end to the child, read sentinel message asynchronously
-- [x] P3-2: Create the `worrywart-client` crate in `crates/worrywart-client/` with `worrywart_init()` and `worrywart_notify_exit()` (Rust API only at this stage)
+- [x] P3-1: Implement sentinel anonymous pipe on the monitor side: create the pipe in `WorrywartCommand::spawn()`, inherit the write end to the child, read sentinel message asynchronously
+- [x] P3-2: Define the sentinel wire protocol (8-byte message: `WORT` magic + little-endian exit code) written to the inherited pipe handle whose value is passed via `WORRYWART_SENTINEL_HANDLE`; a dedicated client library is deferred to the Phase 5 C implementation
 - [x] P3-3: Wire sentinel signal into `TerminationReason` classification: sentinel received before `EXIT_PROCESS` → `CleanExit`; no sentinel + no exception → `ExternalKill`
-- [x] P3-4: Add integration tests: cooperative child calls `worrywart_notify_exit()` → `CleanExit`; `TerminateProcess` from test harness → `ExternalKill`
+- [x] P3-4: Add integration tests: cooperative child writes the sentinel message → `CleanExit`; `TerminateProcess` from test harness → `ExternalKill`
 
 ---
 
@@ -54,9 +54,9 @@ One item, one commit. Tests must pass before committing.
 
 - [x] P5-1: Add `tracing` integration: pump thread and IOCP thread emit structured `trace!`/`debug!`/`warn!` events for all state transitions
 - [x] P5-2: Audit tokio-compat `Command`/`Child` surface against `tokio::process` API; document any intentional gaps in rustdoc
-- [x] P5-3: Write rustdoc for all public items in `worrywart` and `worrywart-client`; `cargo_doc` must produce zero warnings
-- [x] P5-4: `cargo_publish --dry-run` passes cleanly for both `worrywart` and `worrywart-client`
-- [x] P5-5: Tag `v0.1.0` and publish both crates to crates.io
+- [x] P5-3: Write rustdoc for all public items in `worrywart`; `cargo_doc` must produce zero warnings
+- [x] P5-4: `cargo_publish --dry-run` passes cleanly for `worrywart`
+- [x] P5-5: Tag `v0.1.0` and publish `worrywart` to crates.io
 ---
 
 ## Phase 5 — C API (post-1.0)
@@ -68,5 +68,5 @@ not a binding to the Rust code.  Written in C, built with CMake (or a simple
 - [ ] P5-1: Implement `worrywart_client` in C: `worrywart_client.h` + `worrywart_client.c` — `worrywart_init()`, `worrywart_notify_exit()`, `worrywart_notify_exit_reason()`; no Rust dependency
 - [ ] P5-2: Implement `worrywart_monitor` in C: Job Object creation with kill-on-close, `PROC_THREAD_ATTRIBUTE_JOB_LIST` spawn, IOCP listener thread, exit classification — mirrors Phase 2 Rust behaviour
 - [ ] P5-3: Implement Debug API monitoring in C: `WaitForDebugEvent` pump, exception correlation → crash/fastfail/unknown — mirrors Phase 1 Rust behaviour
-- [ ] P5-4: Implement sentinel named-pipe support in C: monitor side creates pipe, client side writes sentinel before exit — mirrors Phase 3 Rust behaviour
+- [ ] P5-4: Implement sentinel anonymous-pipe support in C: monitor side creates pipe, client side writes sentinel before exit — mirrors Phase 3 Rust behaviour
 - [ ] P5-5: Add a CMake (or nmake) build for the C library and a smoke test that exercises all three techniques end-to-end

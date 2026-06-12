@@ -10,14 +10,14 @@ The core API (Windows only) provides full process-exit diagnostics:
 ```rust,no_run
 #[cfg(windows)]
 fn main() -> std::io::Result<()> {
-    use worrywart::core::{Worrywart, WorrywartCommand};
+    use worrywart::core::Worrywart;
     use worrywart::Monitor;
 
     let worrywart = Worrywart::new()?;
     let mut child = worrywart.command("my-program")
         .arg("--flag")
         .monitor(Monitor::DebugApi)
-        .spawn()?
+        .spawn()?;
 
     let reason = child.wait_diagnosed()?;
     println!("{reason:?}");

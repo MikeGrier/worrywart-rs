@@ -255,7 +255,14 @@ impl WorrywartCommand {
             // Close the parent's copy of the write end immediately.  The
             // child now holds the only remaining copy; when the child exits
             // the pipe closes and the sentinel listener reports its result.
-            unsafe { CloseHandle(pipe.write_handle) };
+            //
+            // A failed close would leave the parent's write end open, so the
+            // listener would never observe EOF and wait_diagnosed()'s sentinel
+            // refinement could block forever.  Propagate the error instead.
+            let ok = unsafe { CloseHandle(pipe.write_handle) };
+            if ok == windows_sys::Win32::Foundation::FALSE {
+                return Err(std::io::Error::last_os_error());
+            }
             child.sentinel_rx = Some(pipe.sentinel_rx);
         }
 

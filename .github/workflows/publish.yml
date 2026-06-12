@@ -28,8 +28,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # worrywart-client is distributed as a GitHub release artifact (C library),
-      # not published to crates.io.
       - name: publish worrywart
         run: cargo publish --package worrywart --locked
         env:

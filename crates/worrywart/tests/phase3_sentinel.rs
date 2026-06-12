@@ -2,10 +2,10 @@
 //
 // These tests spawn real child processes through the `Worrywart` / `WorrywartCommand`
 // API with `Monitor::Sentinel` and verify that:
-//   P3-4a: A cooperative child that calls worrywart_notify_exit() before
+//   P3-4a: A cooperative child that writes the sentinel message before
 //           exiting is classified as `TerminationReason::CleanExit`.
 //   P3-4b: A child that is terminated externally (TerminateProcess) without
-//           calling worrywart_notify_exit() is classified as
+//           writing the sentinel message is classified as
 //           `TerminationReason::ExternalKill`.
 //
 // Helper binaries used:
@@ -55,7 +55,7 @@ mod sentinel_tests {
             .spawn()
             .expect("spawn");
 
-        // Kill externally — helper-sleep never calls worrywart_notify_exit().
+        // Kill externally — helper-sleep never writes the sentinel message.
         child.kill().expect("kill");
 
         let reason = child.wait_diagnosed().expect("wait_diagnosed");
