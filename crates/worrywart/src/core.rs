@@ -546,8 +546,7 @@ impl WorrywartChild {
         // without reopening by PID (which has a PID-reuse hazard).
         // Ownership of the handle transfers here; Drop closes it.
         use std::os::windows::io::IntoRawHandle;
-        let process_handle =
-            child.into_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+        let process_handle = child.into_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
         WorrywartChild {
             pid,
             process_handle,
@@ -603,7 +602,9 @@ impl WorrywartChild {
 
     fn wait_plain(&self) -> std::io::Result<TerminationReason> {
         use windows_sys::Win32::Foundation::{FALSE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
-        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, INFINITE, WaitForSingleObject};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, INFINITE, WaitForSingleObject,
+        };
 
         // Prefer the handle we already own; only fall back to OpenProcess when
         // none was captured (shouldn't happen after the from_std() fix but kept
