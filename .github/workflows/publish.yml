@@ -1,0 +1,34 @@
+# Copyright (c) 2026 Michael Grier
+name: publish
+
+# Triggered automatically when a v* tag is pushed (typically by
+# release-please after the Release PR is merged).
+# Can also be triggered manually from the Actions tab to publish a tag
+# that was created before this workflow existed.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  publish:
+    name: publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: publish worrywart
+        run: cargo publish --package worrywart --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

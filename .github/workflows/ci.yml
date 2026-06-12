@@ -1,4 +1,4 @@
-# Copyright (c) {{license_year}} {{author_name}}. All rights reserved.
+# Copyright (c) 2026 Michael Grier. All rights reserved.
 name: ci
 
 on:
@@ -43,7 +43,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # `--locked` makes CI fail if Cargo would need to update Cargo.lock.
       # CI must build the exact dependency graph that was committed; any
@@ -69,9 +68,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
@@ -80,22 +76,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   msrv:
-    name: MSRV check (1.85)
+    name: MSRV check (1.95)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       # Pin to the exact MSRV declared in [workspace.package].rust-version
       # so a stray use of a newer-stable feature fails CI rather than
       # silently raising the floor for downstream consumers.
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.95.0 --no-self-update --profile minimal && rustup override set 1.95.0
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (MSRV)
         run: cargo check --workspace --all-targets --locked
