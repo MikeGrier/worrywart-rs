@@ -88,7 +88,8 @@ jobs:
       # Pin to the exact MSRV declared in [workspace.package].rust-version
       # so a stray use of a newer-stable feature fails CI rather than
       # silently raising the floor for downstream consumers.
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.85.0 --no-self-update --profile minimal && rustup override set 1.85.0
       - uses: Swatinem/rust-cache@v2
       - name: cargo check (MSRV)
         run: cargo check --workspace --all-targets --locked
