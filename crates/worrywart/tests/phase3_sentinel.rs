@@ -1,4 +1,4 @@
-// Phase 3 integration tests: Sentinel named-pipe monitor.
+// Phase 3 integration tests: Sentinel anonymous-pipe monitor.
 //
 // These tests spawn real child processes through the `Worrywart` / `WorrywartCommand`
 // API with `Monitor::Sentinel` and verify that:

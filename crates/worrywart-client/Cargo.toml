@@ -12,7 +12,7 @@ rust-version.workspace  = true
 license.workspace       = true
 repository.workspace    = true
 homepage.workspace      = true
-documentation           = "https://docs.rs/worrywart-client"
+# documentation intentionally omitted: publish = false; distributed as GitHub release artifact
 keywords      = ["process", "monitoring", "windows", "sentinel"]
 categories    = ["os::windows-apis", "development-tools"]
 
