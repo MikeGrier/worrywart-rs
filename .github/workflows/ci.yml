@@ -33,7 +33,7 @@ jobs:
     name: encoding sanity check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Run check-encoding.ps1
         shell: pwsh
         run: ./tools/check-encoding.ps1
@@ -42,7 +42,7 @@ jobs:
     name: build + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
       # `--locked` makes CI fail if Cargo would need to update Cargo.lock.
       # CI must build the exact dependency graph that was committed; any
@@ -67,7 +67,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
@@ -75,7 +75,7 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -84,7 +84,7 @@ jobs:
     name: MSRV check (1.95)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       # Pin to the exact MSRV declared in [workspace.package].rust-version
       # so a stray use of a newer-stable feature fails CI rather than
       # silently raising the floor for downstream consumers.
