@@ -10,3 +10,5 @@ target
 
 # cargo mutants
 **/mutants.out*/
+
+.scratch/
