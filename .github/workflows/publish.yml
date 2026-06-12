@@ -28,19 +28,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # worrywart-client has no dependency on worrywart, so either order
-      # works, but publishing the client first is slightly safer.
-      - name: publish worrywart-client
-        run: cargo publish --package worrywart-client --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      # Small delay so crates.io has time to index the client before we
-      # publish worrywart (which doesn't depend on the client, but belt-
-      # and-suspenders for future versions that might).
-      - name: wait for index propagation
-        run: sleep 10
-
+      # worrywart-client is distributed as a GitHub release artifact (C library),
+      # not published to crates.io.
       - name: publish worrywart
         run: cargo publish --package worrywart --locked
         env:
