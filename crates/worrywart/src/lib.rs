@@ -12,17 +12,27 @@
 //!
 //! # Usage
 //!
-//! For callers migrating from `tokio::process`, replace your import and
-//! everything continues to work.  Add `.monitor(Monitor::DebugApi)` to the
-//! builder to enable diagnosis; call `.wait_diagnosed()` instead of
-//! `.wait()` to get a [`TerminationReason`].
+//! ## Cross-platform drop-in (compat layer)
 //!
-//! Refer to the [tokio::process documentation](https://docs.rs/tokio/latest/tokio/process/index.html).
-//! All standard builder and child methods work identically.  The only
-//! additions are `.monitor()` on the builder and `.wait_diagnosed()` on the
-//! child.
+//! For callers migrating from `tokio::process`, replace your import and
+//! everything continues to work identically.  [`Command`] and [`Child`]
+//! mirror `tokio::process` exactly.
+//!
+//! **Current limitation:** monitoring is not yet implemented in the compat
+//! layer.  [`Command::monitor`] stores the requested technique but does not
+//! apply it, and [`Child::wait_diagnosed`] always returns
+//! [`TerminationReason::Unknown`].  Use the [`core`] types below for actual
+//! diagnostics.
+//!
+//! ## Windows diagnostic API (core layer)
+//!
+//! On Windows, use [`core::WorrywartCommand`] to spawn children with full
+//! monitoring.  Add `.monitor(Monitor::DebugApi)` (or `Monitor::JobObject` /
+//! `Monitor::Sentinel`) to the builder and call `.wait_diagnosed()` on the
+//! returned [`core::WorrywartChild`] to get a classified [`TerminationReason`].
 
 pub mod compat;
+#[cfg(windows)]
 pub mod core;
 #[cfg(windows)]
 pub(crate) mod iocp;

@@ -96,7 +96,12 @@ pub fn create() -> std::io::Result<SentinelPipe> {
     std::thread::Builder::new()
         .name("worrywart-sentinel".into())
         .spawn(move || sentinel_thread(read_raw as HANDLE, tx))
-        .expect("failed to spawn sentinel listener thread");
+        .inspect_err(|_| {
+            unsafe {
+                CloseHandle(read_raw as HANDLE);
+                CloseHandle(write_handle);
+            }
+        })?;
 
     trace!("sentinel: pipe created");
     Ok(SentinelPipe {

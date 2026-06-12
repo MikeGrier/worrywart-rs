@@ -42,6 +42,7 @@ const DBG_EXCEPTION_NOT_HANDLED: i32 = 0x80010001_u32 as i32;
 
 // Exception codes (named constants — no bare integers in logic code)
 // ExceptionCode in EXCEPTION_RECORD is i32 (NTSTATUS) in windows-sys 0.59.
+#[allow(dead_code)]
 mod exception_code {
     /// Access violation.
     pub const ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
@@ -56,6 +57,7 @@ mod exception_code {
 }
 
 // Exception flags
+#[allow(dead_code)]
 mod exception_flag {
     /// This is a second-chance (unhandled) exception.
     pub const NON_CONTINUABLE: u32 = 0x0000_0001;
@@ -82,6 +84,9 @@ pub struct SpawnRequest {
     pub stdout_handle: HANDLE,
     pub stderr_handle: HANDLE,
     pub use_stdio_handles: bool,
+    /// Pass `bInheritHandles = TRUE` to `CreateProcessW`.  Set only when
+    /// stdio redirection or a sentinel pipe write handle must be inherited.
+    pub inherit_handles: bool,
     /// Job Object handle to assign the child to atomically at creation.
     /// Pass `INVALID_HANDLE_VALUE` (or null) to skip job assignment.
     pub job_handle: HANDLE,
@@ -94,6 +99,9 @@ pub struct JobSpawnParams {
     pub environment: Option<Vec<u16>>,
     pub current_directory: Option<Vec<u16>>,
     pub job_handle: HANDLE,
+    /// Pass `bInheritHandles = TRUE` to `CreateProcessW`.  Set only when
+    /// a sentinel pipe write handle must be inherited.
+    pub inherit_handles: bool,
 }
 
 // SAFETY: HANDLE is *mut c_void; safe to transfer between threads on Windows.
@@ -115,9 +123,7 @@ unsafe impl Send for SpawnResponse {}
 
 /// Internal per-child state tracked by the pump.
 struct ChildEntry {
-    pid: u32,
     process_handle: HANDLE,
-    thread_handle: HANDLE,
     /// Last recorded second-chance exception, if any.
     pending_exception: Option<PendingException>,
     /// Whether we have passed the initial loader breakpoint.
@@ -151,16 +157,15 @@ pub struct Pump {
 
 impl Pump {
     /// Spawns the pump OS thread.
-    pub fn start() -> Self {
+    pub fn start() -> std::io::Result<Self> {
         let (tx, rx) = mpsc::channel::<PumpMessage>();
         let thread = std::thread::Builder::new()
             .name("worrywart-debug-pump".into())
-            .spawn(move || pump_loop(rx))
-            .expect("failed to spawn debug pump thread");
-        Pump {
+            .spawn(move || pump_loop(rx))?;
+        Ok(Pump {
             tx,
             thread: Some(thread),
-        }
+        })
     }
 
     /// Sends a spawn request to the pump and waits for the response.
@@ -212,9 +217,7 @@ fn pump_loop(rx: mpsc::Receiver<PumpMessage>) {
                             let pid = pi.dwProcessId;
                             debug!(pid, "pump: child spawned");
                             let entry = ChildEntry {
-                                pid: pi.dwProcessId,
                                 process_handle: pi.hProcess,
-                                thread_handle: pi.hThread,
                                 pending_exception: None,
                                 past_loader_bp: past_loader,
                                 affinity_mask: req.affinity_mask,
@@ -283,6 +286,7 @@ fn create_debugged_child(req: &SpawnRequest) -> std::io::Result<(PROCESS_INFORMA
         req.stdout_handle,
         req.stderr_handle,
         req.use_stdio_handles,
+        req.inherit_handles,
         true,
     )?;
     Ok((pi, false))
@@ -302,6 +306,7 @@ pub(crate) fn create_process_for_job(
         INVALID_HANDLE_VALUE,
         INVALID_HANDLE_VALUE,
         false,
+        params.inherit_handles,
         false,
     )
 }
@@ -322,6 +327,7 @@ fn create_process_impl(
     stdout_handle: HANDLE,
     stderr_handle: HANDLE,
     use_stdio_handles: bool,
+    inherit_handles: bool,
     debug: bool,
 ) -> std::io::Result<PROCESS_INFORMATION> {
     let has_job = !job_handle.is_null() && job_handle != INVALID_HANDLE_VALUE;
@@ -396,7 +402,7 @@ fn create_process_impl(
             command_line.as_ptr() as *mut _,
             std::ptr::null(),
             std::ptr::null(),
-            TRUE,
+            if inherit_handles { TRUE } else { FALSE },
             flags,
             env_ptr,
             dir_ptr,
@@ -484,11 +490,8 @@ fn dispatch_event(children: &mut HashMap<u32, ChildEntry>, event: &DEBUG_EVENT) 
                 let reason = classify_exit(child.pending_exception, exit_code);
                 debug!(pid, exit_code, ?reason, "pump: child exited");
                 let _ = child.exit_tx.send(Ok(reason));
-                // Close our copies of the process/thread handles.
-                unsafe {
-                    CloseHandle(child.process_handle);
-                    CloseHandle(child.thread_handle);
-                }
+                // process_handle and thread_handle are owned by WorrywartChild
+                // (returned in SpawnResponse); do not close them here.
             }
             DBG_CONTINUE
         }
@@ -516,10 +519,8 @@ fn dispatch_event(children: &mut HashMap<u32, ChildEntry>, event: &DEBUG_EVENT) 
                 let _ = child
                     .exit_tx
                     .send(Ok(crate::TerminationReason::ExternalKill(status)));
-                unsafe {
-                    CloseHandle(child.process_handle);
-                    CloseHandle(child.thread_handle);
-                }
+                // process_handle and thread_handle are owned by WorrywartChild
+                // (returned in SpawnResponse); do not close them here.
             }
             DBG_CONTINUE
         }

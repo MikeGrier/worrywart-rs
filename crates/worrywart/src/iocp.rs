@@ -89,7 +89,9 @@ impl Iocp {
         let thread = std::thread::Builder::new()
             .name("worrywart-iocp".into())
             .spawn(move || iocp_loop(iocp_raw as HANDLE, rx))
-            .expect("failed to spawn IOCP listener thread");
+            .inspect_err(|_| {
+                unsafe { CloseHandle(iocp) };
+            })?;
 
         Ok(Iocp {
             iocp_handle: iocp,

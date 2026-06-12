@@ -264,7 +264,7 @@ impl WorrywartCommand {
         // Ensure the pump thread exists.
         let mut guard = self.pump.lock().unwrap();
         if guard.is_none() {
-            *guard = Some(Pump::start());
+            *guard = Some(Pump::start()?);
         }
         let pump = guard.as_ref().unwrap();
 
@@ -285,6 +285,8 @@ impl WorrywartCommand {
             stdout_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             stderr_handle: windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE,
             use_stdio_handles: false,
+            // Sentinel is not used in the debug-pump path; no handles to inherit.
+            inherit_handles: false,
             // Always assign to the job so kill-on-close applies.
             job_handle: self.job.raw(),
         };
@@ -315,12 +317,15 @@ impl WorrywartCommand {
         let environment = build_env_block(self.env_clear, &self.envs);
         let current_directory = self.current_dir.as_deref().map(to_wide_null);
 
+        // Sentinel write handle is inheritable; CreateProcess must propagate it.
+        let use_sentinel = self.monitors.contains(&Monitor::Sentinel);
         let params = JobSpawnParams {
             application_name: None,
             command_line,
             environment,
             current_directory,
             job_handle: self.job.raw(),
+            inherit_handles: use_sentinel,
         };
 
         let pi = create_process_for_job(&params)?;
