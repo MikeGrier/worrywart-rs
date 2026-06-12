@@ -14,6 +14,8 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
 
+use tracing::{debug, trace};
+
 use crate::iocp::Iocp;
 use crate::pump::{Pump, SpawnRequest, SpawnResponse, TerminationResult};
 use crate::{Monitor, TerminationReason};
@@ -221,6 +223,8 @@ impl WorrywartCommand {
     pub fn spawn(mut self) -> std::io::Result<WorrywartChild> {
         use windows_sys::Win32::Foundation::CloseHandle;
 
+        trace!(program = ?self.program, monitors = ?self.monitors, "core: spawn requested");
+
         let use_debug_api = self.monitors.contains(&Monitor::DebugApi);
         let use_job_object = self.monitors.contains(&Monitor::JobObject);
         let use_sentinel = self.monitors.contains(&Monitor::Sentinel);
@@ -299,6 +303,7 @@ impl WorrywartCommand {
 
         drop(guard);
 
+        debug!(pid, "core: spawned child (debug api)");
         Ok(WorrywartChild {
             pid,
             process_handle,
@@ -347,6 +352,8 @@ impl WorrywartCommand {
             unsafe { CloseHandle(pi.hThread) };
         }
 
+        let pid = pi.dwProcessId;
+        debug!(pid, "core: spawned child (job object)");
         Ok(WorrywartChild {
             pid: pi.dwProcessId,
             process_handle: pi.hProcess,
@@ -371,6 +378,7 @@ impl WorrywartCommand {
         }
         let child = cmd.spawn()?;
         let pid = child.id();
+        debug!(pid, "core: spawned child (plain)");
         Ok(WorrywartChild::from_std(child, pid))
     }
 }
@@ -563,6 +571,7 @@ impl WorrywartChild {
             let reason = cached.into_reason();
             // Re-cache so subsequent calls don't block on a closed channel.
             self.cached_reason = Some(CachedReason::from_reason(&reason));
+            trace!(pid = self.pid, ?reason, "core: wait_diagnosed (cached)");
             return Ok(reason);
         }
 
@@ -582,6 +591,7 @@ impl WorrywartChild {
         // of the pipe write end is closed, so sentinel_rx resolves promptly.
         let reason = refine_with_sentinel(raw, &mut self.sentinel_rx);
 
+        debug!(pid = self.pid, ?reason, "core: wait_diagnosed");
         // Re-cache for a second call.
         self.cached_reason = Some(CachedReason::from_reason(&reason));
         Ok(reason)

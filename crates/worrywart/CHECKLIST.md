@@ -52,7 +52,7 @@ One item, one commit. Tests must pass before committing.
 
 ## Phase 4 — 0.1.0 Release
 
-- [ ] P5-1: Add `tracing` integration: pump thread and IOCP thread emit structured `trace!`/`debug!`/`warn!` events for all state transitions
+- [x] P5-1: Add `tracing` integration: pump thread and IOCP thread emit structured `trace!`/`debug!`/`warn!` events for all state transitions
 - [ ] P5-2: Audit tokio-compat `Command`/`Child` surface against `tokio::process` API; document any intentional gaps in rustdoc
 - [ ] P5-3: Write rustdoc for all public items in `worrywart` and `worrywart-client`; `cargo_doc` must produce zero warnings
 - [ ] P5-4: `cargo_publish --dry-run` passes cleanly for both `worrywart` and `worrywart-client`

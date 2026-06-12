@@ -162,6 +162,7 @@ impl Pump {
         let thread = std::thread::Builder::new()
             .name("worrywart-debug-pump".into())
             .spawn(move || pump_loop(rx))?;
+        debug!("pump: thread started");
         Ok(Pump {
             tx,
             thread: Some(thread),
